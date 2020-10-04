@@ -337,9 +337,9 @@ const getStreamMethods = (opts, variator = '') => {
   )
 }
 
-export const keepStreamAlive = (method, listenKey) => method({ listenKey })
+export const keepStreamAlive = (method, listenKey, payload) => method({ ...payload, listenKey })
 
-const user = (opts, variator) => cb => {
+const user = (opts, variator) => (payload, cb) => {
   const [getDataStream, keepDataStream, closeDataStream] = getStreamMethods(opts, variator)
 
   let currentListenKey = null
@@ -348,7 +348,7 @@ const user = (opts, variator) => cb => {
 
   const keepAlive = isReconnecting => {
     if (currentListenKey) {
-      keepStreamAlive(keepDataStream, currentListenKey).catch(() => {
+      keepStreamAlive(keepDataStream, currentListenKey, payload).catch(() => {
         closeStream({}, true)
 
         if (isReconnecting) {
@@ -364,7 +364,7 @@ const user = (opts, variator) => cb => {
     if (currentListenKey) {
       clearInterval(int)
 
-      const p = closeDataStream({ listenKey: currentListenKey })
+      const p = closeDataStream({ ...payload, listenKey: currentListenKey })
 
       if (catchErrors) {
         p.catch(f => f)
@@ -376,7 +376,7 @@ const user = (opts, variator) => cb => {
   }
 
   const makeStream = isReconnecting => {
-    return getDataStream()
+    return getDataStream(payload)
       .then(({ listenKey }) => {
         w = openWebSocket(`${variator === 'futures' ? FUTURES : BASE}/${listenKey}`)
         w.onmessage = msg => userEventHandler(cb)(msg)
@@ -411,5 +411,6 @@ export default opts => ({
   allTickers,
   user: user(opts),
   marginUser: user(opts, 'margin'),
+  isolatedUser: user(opts, 'isolated'),
   futuresUser: user(opts, 'futures'),
 })

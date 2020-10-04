@@ -1,7 +1,24 @@
 import crypto from 'crypto'
 import zip from 'lodash.zipobject'
+import Bottleneck from 'bottleneck/es5'
 
 import 'isomorphic-fetch'
+
+const { mapValues } = require('lodash')
+
+const isNumber = n => !isNaN(parseFloat(n)) && !isNaN(n - 0)
+
+const mapToFloat = x => mapValues(x, y => isNumber(y) ? parseFloat(y) : y)
+
+const limiter = new Bottleneck({
+  maxConcurrent: 5,
+  minTime: 50
+})
+
+const limiter60perMin = new Bottleneck({
+  maxConcurrent: 5,
+  minTime: 1200
+})
 
 const BASE = 'https://api.binance.com'
 const FUTURES = 'https://fapi.binance.com'
@@ -142,7 +159,7 @@ const privateCall = ({ apiKey, apiSecret, endpoints, getTime = defaultGetTime, p
 
     const newData = noExtra ? data : { ...data, timestamp, signature }
 
-    return sendResult(
+    return sendResult(limiter.schedule(() => 
       fetch(
         `${!path.includes('/fapi') ? endpoints.base : endpoints.futures}${path}${
           noData ? '' : makeQueryString(newData)
@@ -152,7 +169,7 @@ const privateCall = ({ apiKey, apiSecret, endpoints, getTime = defaultGetTime, p
           headers: { 'X-MBX-APIKEY': apiKey },
           json: true,
         },
-      ),
+      )),
     )
   })
 }
@@ -308,53 +325,38 @@ export default opts => {
     capitalConfigs: () => privCall('/sapi/v1/capital/config/getall'),
     capitalDepositAddress: payload => privCall('/sapi/v1/capital/deposit/address', payload),
 
-    getDataStream: () => privCall('/api/v3/userDataStream', null, 'POST', true),
-    keepDataStream: payload => privCall('/api/v3/userDataStream', payload, 'PUT', false, true),
-    closeDataStream: payload => privCall('/api/v3/userDataStream', payload, 'DELETE', false, true),
+    
 
-    marginGetDataStream: () => privCall('/sapi/v1/userDataStream', null, 'POST', true),
-    marginKeepDataStream: payload =>
-      privCall('/sapi/v1/userDataStream', payload, 'PUT', false, true),
-    marginCloseDataStream: payload =>
-      privCall('/sapi/v1/userDataStream', payload, 'DELETE', false, true),
 
-    futuresGetDataStream: () => privCall('/fapi/v1/listenKey', null, 'POST', true),
-    futuresKeepDataStream: payload => privCall('/fapi/v1/listenKey', payload, 'PUT', false, true),
-    futuresCloseDataStream: payload =>
-      privCall('/fapi/v1/listenKey', payload, 'DELETE', false, true),
+    marginAllOrders: payload => privCall('/sapi/v1/margin/allOrders', payload)
+      .then(result => result.map(mapToFloat).map(x => ({...x, wallet: 'MARGIN', date: new Date(x.time), updateDate: new Date(x.updateTime)}))),
 
-    marginAllOrders: payload => privCall('/sapi/v1/margin/allOrders', payload),
+
     marginOrder: payload => order(privCall, payload, '/sapi/v1/margin/order'),
     marginCancelOrder: payload => privCall('/sapi/v1/margin/order', payload, 'DELETE'),
     marginOpenOrders: payload => privCall('/sapi/v1/margin/openOrders', payload),
     marginAccountInfo: payload => privCall('/sapi/v1/margin/account', payload),
     marginMyTrades: payload => privCall('/sapi/v1/margin/myTrades', payload),
+    marginInterestHistory: payload => privCall('/sapi/v1/margin/interestHistory', payload),
 
-    futuresPing: () => pubCall('/fapi/v1/ping').then(() => true),
-    futuresTime: () => pubCall('/fapi/v1/time').then(r => r.serverTime),
-    futuresExchangeInfo: () => pubCall('/fapi/v1/exchangeInfo'),
-    futuresBook: payload => book(pubCall, payload, '/fapi/v1/depth'),
-    futuresAggTrades: payload => aggTrades(pubCall, payload, '/fapi/v1/aggTrades'),
-    futuresMarkPrice: payload => pubCall('/fapi/v1/premiumIndex', payload),
-    futuresAllForceOrders: payload => pubCall('/fapi/v1/allForceOrders', payload),
-    futuresCandles: payload => candles(pubCall, payload, '/fapi/v1/klines'),
-    futuresTrades: payload =>
-      checkParams('trades', payload, ['symbol']) && pubCall('/fapi/v1/trades', payload),
-    futuresDailyStats: payload => pubCall('/fapi/v1/ticker/24hr', payload),
-    futuresPrices: () =>
-      pubCall('/fapi/v1/ticker/price').then(r =>
-        r.reduce((out, cur) => ((out[cur.symbol] = cur.price), out), {}),
-      ),
-    futuresAllBookTickers: () =>
-      pubCall('/fapi/v1/ticker/bookTicker').then(r =>
-        r.reduce((out, cur) => ((out[cur.symbol] = cur), out), {}),
-      ),
-    futuresFundingRate: payload =>
-      checkParams('fundingRate', payload, ['symbol']) && pubCall('/fapi/v1/fundingRate', payload),
+    marginMaxBorrowable: payload => privCall('/sapi/v1/margin/maxBorrowable', payload),
 
-    futuresOrder: payload => order(privCall, payload, '/fapi/v1/order'),
-    futuresCancelOrder: payload => privCall('/fapi/v1/order', payload, 'DELETE'),
-    futuresOpenOrders: payload => privCall('/fapi/v1/openOrders', payload),
-    futuresPositionRisk: payload => privCall('/fapi/v1/positionRisk', payload),
+    marginRepay: payload => privCall('/sapi/v1/margin/repay', payload, 'POST'),
+
+
+
+
+    getDataStream: () => privCall('/api/v3/userDataStream', null, 'POST', true),
+    keepDataStream: payload => privCall('/api/v3/userDataStream', payload, 'PUT', false, true),
+    closeDataStream: payload => privCall('/api/v3/userDataStream', payload, 'DELETE', false, true),
+
+    marginGetDataStream: () => privCall('/sapi/v1/userDataStream', null, 'POST', true),
+    marginKeepDataStream: payload => privCall('/sapi/v1/userDataStream', payload, 'PUT', false, true),
+    marginCloseDataStream: payload => privCall('/sapi/v1/userDataStream', payload, 'DELETE', false, true),
+
+    isolatedGetDataStream: payload => privCall('/sapi/v1/userDataStream', payload, 'POST', true),
+    isolatedKeepDataStream: payload => privCall('/sapi/v1/userDataStream', payload, 'PUT', false, true),
+    isolatedCloseDataStream: payload => privCall('/sapi/v1/userDataStream', payload, 'DELETE', false, true),
+
   }
 }
